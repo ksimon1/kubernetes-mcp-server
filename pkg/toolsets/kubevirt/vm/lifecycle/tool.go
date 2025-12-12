@@ -19,6 +19,8 @@ const (
 	ActionStart   Action = "start"
 	ActionStop    Action = "stop"
 	ActionRestart Action = "restart"
+	ActionPause   Action = "pause"
+	ActionUnpause Action = "unpause"
 )
 
 func Tools() []api.ServerTool {
@@ -26,7 +28,7 @@ func Tools() []api.ServerTool {
 		{
 			Tool: api.Tool{
 				Name:        "vm_lifecycle",
-				Description: "Manage VirtualMachine lifecycle: start, stop, or restart a VM",
+				Description: "Manage VirtualMachine lifecycle: start, stop, restart, pause, or unpause a VM",
 				InputSchema: &jsonschema.Schema{
 					Type: "object",
 					Properties: map[string]*jsonschema.Schema{
@@ -40,8 +42,8 @@ func Tools() []api.ServerTool {
 						},
 						"action": {
 							Type:        "string",
-							Enum:        []any{string(ActionStart), string(ActionStop), string(ActionRestart)},
-							Description: "The lifecycle action to perform: 'start' (changes runStrategy to Always), 'stop' (changes runStrategy to Halted), or 'restart' (stops then starts the VM)",
+							Enum:        []any{string(ActionStart), string(ActionStop), string(ActionRestart), string(ActionPause), string(ActionUnpause)},
+							Description: "The lifecycle action to perform: 'start' (changes runStrategy to Always), 'stop' (changes runStrategy to Halted), 'restart' (stops then starts the VM), 'pause' (pauses a running VM), or 'unpause' (resumes a paused VM)",
 						},
 					},
 					Required: []string{"namespace", "name", "action"},
@@ -118,8 +120,34 @@ func lifecycle(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		}
 		message = "# VirtualMachine restarted successfully\n"
 
+	case ActionPause:
+		restConfig := k8s.AccessControlClientset().RESTConfig()
+		var wasPaused bool
+		vm, wasPaused, err = kubevirt.PauseVM(params.Context, dynamicClient, restConfig, namespace, name)
+		if err != nil {
+			return api.NewToolCallResult("", err), nil
+		}
+		if wasPaused {
+			message = "# VirtualMachine paused successfully\n"
+		} else {
+			message = fmt.Sprintf("# VirtualMachine '%s' in namespace '%s' is already paused\n", name, namespace)
+		}
+
+	case ActionUnpause:
+		restConfig := k8s.AccessControlClientset().RESTConfig()
+		var wasUnpaused bool
+		vm, wasUnpaused, err = kubevirt.UnpauseVM(params.Context, dynamicClient, restConfig, namespace, name)
+		if err != nil {
+			return api.NewToolCallResult("", err), nil
+		}
+		if wasUnpaused {
+			message = "# VirtualMachine unpaused successfully\n"
+		} else {
+			message = fmt.Sprintf("# VirtualMachine '%s' in namespace '%s' is not paused\n", name, namespace)
+		}
+
 	default:
-		return api.NewToolCallResult("", fmt.Errorf("invalid action '%s': must be one of 'start', 'stop', 'restart'", action)), nil
+		return api.NewToolCallResult("", fmt.Errorf("invalid action '%s': must be one of 'start', 'stop', 'restart', 'pause', 'unpause'", action)), nil
 	}
 
 	// Format the output
